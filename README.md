@@ -4,15 +4,16 @@ A lightweight jewellery shop dashboard for tracking inventory, customers, and sa
 
 ## Features
 
-- Product management: add, edit, and delete products with Product ID, name, category, material, purity, weight, price, and stock
-- Product search (by ID, name, material, or purity) and category filter
+- Product management: add, view, edit, and delete products with Product ID, name, category, material, purity, weight, price, stock, and an optional product image
+- Product list in table or card layout, with search, category filter, sorting, and a "low stock only" filter
+- Low-stock warning banner and quick stock adjustment (− / + / set) from the product view; stock also updates automatically after each sale
 - Customer management: add, edit, and delete customers with Customer ID, name, phone, email, and address
 - Customer search and per-customer purchase history (invoices, items bought, total spent)
 - Billing: multi-item bills with product price, weight, quantity, subtotal, discount (₹ or %), GST, and grand total
 - Printable tax invoices with amount in words; stock is reduced automatically after each sale
 - Sales history with invoice search and re-opening/printing of past invoices
 - Summary cards for value, monthly sales, and low-stock alerts
-- Local browser storage for persistence without a backend
+- Local browser storage for persistence without a backend (product images are resized to 480px JPEG and stored separately; roughly 80–150 images fit)
 
 ## Shop details on invoices
 

@@ -155,6 +155,17 @@
               <span>Stock quantity</span>
               <input type="number" name="stock" placeholder="0" min="0" step="1" required />
             </label>
+            <div class="field field-image">
+              <span>Product image</span>
+              <div class="image-picker">
+                <span class="image-preview is-placeholder" id="productImagePreview"></span>
+                <label class="small-btn file-btn">
+                  <span id="productImageButtonLabel">Choose image</span>
+                  <input type="file" id="productImageInput" accept="image/*" class="visually-hidden" />
+                </label>
+                <button type="button" class="small-btn small-btn-danger" id="removeProductImage" hidden>Remove</button>
+              </div>
+            </div>
             <div class="field field-action">
               <button type="submit" class="btn btn-primary">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
@@ -164,6 +175,15 @@
             </div>
             <p class="form-message" id="productFormMessage" role="alert" hidden></p>
           </form>
+
+          <div class="stock-alert" id="lowStockAlert" role="status" hidden>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+              <path d="M12 9v4M12 17h.01" />
+            </svg>
+            <p id="lowStockAlertText"></p>
+            <button type="button" class="small-btn" id="showLowStock">Show them</button>
+          </div>
 
           <div class="table-toolbar">
             <label class="search-field">
@@ -178,14 +198,45 @@
               <span class="visually-hidden">Filter by category</span>
               <select id="categoryFilter"></select>
             </label>
+            <label class="filter-field">
+              <span class="visually-hidden">Sort products</span>
+              <select id="productSort">
+                <option value="id">Sort: Product ID</option>
+                <option value="newest">Sort: Newest first</option>
+                <option value="name-asc">Sort: Name A–Z</option>
+                <option value="name-desc">Sort: Name Z–A</option>
+                <option value="price-asc">Sort: Price low → high</option>
+                <option value="price-desc">Sort: Price high → low</option>
+                <option value="stock-asc">Sort: Stock low → high</option>
+                <option value="stock-desc">Sort: Stock high → low</option>
+                <option value="weight-desc">Sort: Heaviest first</option>
+              </select>
+            </label>
+            <label class="toggle-chip">
+              <input type="checkbox" id="lowStockOnly" />
+              <span>Low stock only</span>
+            </label>
             <span class="toolbar-meta" id="productResultInfo" aria-live="polite"></span>
             <button type="button" class="small-btn" id="clearProductFilters" hidden>Clear filters</button>
+            <div class="view-switch" role="group" aria-label="Product layout">
+              <button type="button" data-layout="table" aria-pressed="true" title="Table view">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18" /></svg>
+                <span>Table</span>
+              </button>
+              <button type="button" data-layout="cards" aria-pressed="false" title="Card view">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+                <span>Cards</span>
+              </button>
+            </div>
           </div>
 
-          <div class="table-wrap">
+          <p class="empty-note" id="productEmptyState" hidden></p>
+
+          <div class="table-wrap" id="productTableWrap">
             <table class="data-table">
               <thead>
                 <tr>
+                  <th class="image-col"><span class="visually-hidden">Image</span></th>
                   <th>Product ID</th>
                   <th>Product</th>
                   <th>Category</th>
@@ -200,6 +251,8 @@
               <tbody id="inventoryTableBody"></tbody>
             </table>
           </div>
+
+          <div class="product-cards" id="productCards" hidden></div>
         </section>
 
         <section class="panel" id="billing" aria-labelledby="billing-title">
@@ -417,6 +470,16 @@
         </section>
       </main>
     </div>
+
+    <dialog class="modal" id="productDialog" aria-labelledby="productDialogTitle">
+      <div class="modal-header">
+        <h2 id="productDialogTitle">Product</h2>
+        <button type="button" class="icon-btn" data-close-dialog aria-label="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+      <div class="modal-body" id="productDialogContent"></div>
+    </dialog>
 
     <dialog class="modal" id="customerDialog" aria-labelledby="customerDialogTitle">
       <div class="modal-header">

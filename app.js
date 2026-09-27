@@ -1,7 +1,9 @@
 const STORAGE_KEYS = {
   inventory: 'jewel-inventory',
   sales: 'jewel-sales',
-  customers: 'jewel-customers'
+  customers: 'jewel-customers',
+  productImages: 'jewel-product-images',
+  productLayout: 'jewel-product-layout'
 };
 
 // Shown on invoices. Fill in your shop's details here.
@@ -19,6 +21,8 @@ const CUSTOMER_ID_PREFIX = 'CUS-';
 const INVOICE_PREFIX = 'INV-';
 const LOW_STOCK_LIMIT = 2;
 const DEFAULT_TAX_RATE = 3;
+const PRODUCT_IMAGE_MAX_SIZE = 480; // px, longest side after resizing
+const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 const defaultInventory = [
   { id: 'item-1', productId: 'JW-0001', name: 'Diamond Ring', category: 'Ring', material: 'Diamond', purity: '18K', weight: 2.4, price: 24500, stock: 4 },
@@ -55,7 +59,17 @@ const defaultSales = [
 ];
 
 // UI state
-const productView = { search: '', category: '', editingId: null };
+const productView = {
+  search: '',
+  category: '',
+  sort: 'id',
+  lowStockOnly: false,
+  layout: 'table',
+  editingId: null,
+  viewingId: null,
+  imageDraft: undefined, // undefined = unchanged, null = remove, string = new image
+  imagePending: null
+};
 const customerView = { search: '', editingId: null };
 const salesView = { search: '' };
 const billState = { lines: [] }; // { itemId, price, quantity }
@@ -323,10 +337,143 @@ function renderStats() {
   document.getElementById('lowStockCount').textContent = String(lowStockCount);
 }
 
+/* ---------- Product images ---------- */
+
+// Images live under their own key ({ [itemId]: dataUrl }) so product lists stay small.
+let productImageCache = null;
+
+function getProductImages() {
+  if (!productImageCache) {
+    const stored = readStorage(STORAGE_KEYS.productImages, {});
+    productImageCache = stored && typeof stored === 'object' ? stored : {};
+  }
+  return productImageCache;
+}
+
+// Returns false when the browser storage is full.
+function saveProductImage(itemId, dataUrl) {
+  const images = { ...getProductImages() };
+  if (dataUrl) {
+    images[itemId] = dataUrl;
+  } else {
+    delete images[itemId];
+  }
+
+  try {
+    writeStorage(STORAGE_KEYS.productImages, images);
+    productImageCache = images;
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function resizeImageFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type)) {
+      reject(new Error('Please choose an image file (JPG, PNG or WebP).'));
+      return;
+    }
+    if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+      reject(new Error('That image is larger than 10 MB. Please choose a smaller one.'));
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const scale = Math.min(1, PRODUCT_IMAGE_MAX_SIZE / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const context = canvas.getContext('2d');
+      context.fillStyle = '#ffffff'; // JPEG has no transparency
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('This image could not be read. Please try a different file.'));
+    };
+    image.src = url;
+  });
+}
+
+const PLACEHOLDER_ICON = `
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M6 3h12l4 6-10 12L2 9z" />
+    <path d="M2 9h20M12 21 8 9l4-6 4 6-4 12" />
+  </svg>`;
+
+function renderProductImage(item, className) {
+  const src = getProductImages()[item.id];
+  if (src) {
+    return `<span class="${className}"><img src="${escapeHtml(src)}" alt="${escapeHtml(item.name)}" loading="lazy" /></span>`;
+  }
+  return `<span class="${className} is-placeholder" aria-hidden="true">${PLACEHOLDER_ICON}</span>`;
+}
+
+function setImagePreview(dataUrl) {
+  const preview = document.getElementById('productImagePreview');
+  preview.innerHTML = dataUrl ? `<img src="${escapeHtml(dataUrl)}" alt="Selected product image" />` : PLACEHOLDER_ICON;
+  preview.classList.toggle('is-placeholder', !dataUrl);
+  document.getElementById('removeProductImage').hidden = !dataUrl;
+  document.getElementById('productImageButtonLabel').textContent = dataUrl ? 'Change' : 'Choose image';
+}
+
+function handleProductImageChange(event) {
+  const input = event.target;
+  const file = input.files && input.files[0];
+  if (!file) return;
+
+  showProductMessage('');
+  productView.imagePending = resizeImageFile(file)
+    .then((dataUrl) => {
+      productView.imageDraft = dataUrl;
+      setImagePreview(dataUrl);
+    })
+    .catch((error) => {
+      showProductMessage(error.message);
+    })
+    .finally(() => {
+      productView.imagePending = null;
+      input.value = '';
+    });
+}
+
+function removeProductImageDraft() {
+  productView.imageDraft = null; // null = remove on save
+  setImagePreview('');
+}
+
 /* ---------- Products ---------- */
+
+const PRODUCT_SORTERS = {
+  id: (a, b) => a.productId.localeCompare(b.productId, undefined, { numeric: true }),
+  newest: () => 0, // handled by reversing the stored order
+  'name-asc': (a, b) => a.name.localeCompare(b.name),
+  'name-desc': (a, b) => b.name.localeCompare(a.name),
+  'price-asc': (a, b) => a.price - b.price,
+  'price-desc': (a, b) => b.price - a.price,
+  'stock-asc': (a, b) => a.stock - b.stock,
+  'stock-desc': (a, b) => b.stock - a.stock,
+  'weight-desc': (a, b) => b.weight - a.weight
+};
+
+function sortProducts(products) {
+  if (productView.sort === 'newest') return products.slice().reverse();
+  const sorter = PRODUCT_SORTERS[productView.sort] || PRODUCT_SORTERS.id;
+  return products.slice().sort(sorter);
+}
 
 function productMatchesView(item) {
   if (productView.category && item.category !== productView.category) {
+    return false;
+  }
+
+  if (productView.lowStockOnly && item.stock > LOW_STOCK_LIMIT) {
     return false;
   }
 
@@ -337,31 +484,51 @@ function productMatchesView(item) {
     .some((field) => String(field || '').toLowerCase().includes(query));
 }
 
-function renderInventory() {
-  const inventory = getInventory();
-  const visible = inventory.filter(productMatchesView);
-  const tableBody = document.getElementById('inventoryTableBody');
-  const resultInfo = document.getElementById('productResultInfo');
-  const isFiltered = Boolean(productView.search.trim() || productView.category);
+function stockStatusText(stock) {
+  if (stock <= 0) return 'Out of stock';
+  if (stock <= LOW_STOCK_LIMIT) return 'Low stock';
+  return 'In stock';
+}
 
-  setCountLabel('inventoryCountLabel', inventory.length, 'product', 'products');
-  resultInfo.textContent = isFiltered ? `Showing ${visible.length} of ${inventory.length}` : '';
-  document.getElementById('clearProductFilters').hidden = !isFiltered;
+function renderLowStockAlert(inventory) {
+  const alert = document.getElementById('lowStockAlert');
+  const lowItems = inventory.filter((item) => item.stock <= LOW_STOCK_LIMIT).sort((a, b) => a.stock - b.stock);
 
-  if (!inventory.length) {
-    tableBody.innerHTML = '<tr><td colspan="9" class="empty-state">No products yet. Add your first product above.</td></tr>';
+  if (!lowItems.length) {
+    alert.hidden = true;
     return;
   }
 
-  if (!visible.length) {
-    tableBody.innerHTML = '<tr><td colspan="9" class="empty-state">No products match your search or filter.</td></tr>';
-    return;
-  }
+  const outCount = lowItems.filter((item) => item.stock <= 0).length;
+  const names = lowItems.slice(0, 3).map((item) => `${escapeHtml(item.name)} (${item.stock})`).join(', ');
+  const more = lowItems.length > 3 ? ` and ${lowItems.length - 3} more` : '';
+  const outText = outCount ? ` <strong>${outCount} out of stock.</strong>` : '';
 
-  tableBody.innerHTML = visible
+  document.getElementById('lowStockAlertText').innerHTML =
+    `<strong>${lowItems.length} ${lowItems.length === 1 ? 'product is' : 'products are'} low on stock:</strong> ${names}${more}.${outText}`;
+  document.getElementById('showLowStock').textContent = productView.lowStockOnly ? 'Show all products' : 'Show them';
+  alert.hidden = false;
+}
+
+function productActionButtons(item) {
+  return `
+    <div class="row-actions">
+      <button type="button" class="small-btn" data-view-item="${escapeHtml(item.id)}" aria-label="View ${escapeHtml(item.name)}">View</button>
+      <button type="button" class="small-btn" data-edit-item="${escapeHtml(item.id)}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>
+      <button type="button" class="small-btn small-btn-danger" data-delete-item="${escapeHtml(item.id)}" aria-label="Delete ${escapeHtml(item.name)}">Delete</button>
+    </div>`;
+}
+
+function renderProductTable(visible) {
+  document.getElementById('inventoryTableBody').innerHTML = visible
     .map(
       (item) => `
         <tr class="${item.id === productView.editingId ? 'is-editing' : ''}">
+          <td data-label="Image" class="image-cell">
+            <button type="button" class="thumb-btn" data-view-item="${escapeHtml(item.id)}" aria-label="View ${escapeHtml(item.name)}">
+              ${renderProductImage(item, 'product-thumb')}
+            </button>
+          </td>
           <td data-label="Product ID"><span class="code">${escapeHtml(item.productId)}</span></td>
           <td data-label="Product" class="cell-strong">${escapeHtml(item.name)}</td>
           <td data-label="Category"><span class="tag">${escapeHtml(item.category)}</span></td>
@@ -370,16 +537,79 @@ function renderInventory() {
           <td data-label="Weight" class="num">${escapeHtml(item.weight)} g</td>
           <td data-label="Price" class="num cell-strong">${formatCurrency(item.price)}</td>
           <td data-label="Stock" class="num">${renderStockBadge(item.stock)}</td>
-          <td class="actions">
-            <div class="row-actions">
-              <button type="button" class="small-btn" data-edit-item="${escapeHtml(item.id)}" aria-label="Edit ${escapeHtml(item.name)}">Edit</button>
-              <button type="button" class="small-btn small-btn-danger" data-delete-item="${escapeHtml(item.id)}" aria-label="Delete ${escapeHtml(item.name)}">Delete</button>
-            </div>
-          </td>
+          <td class="actions">${productActionButtons(item)}</td>
         </tr>
       `
     )
     .join('');
+}
+
+function renderProductCards(visible) {
+  document.getElementById('productCards').innerHTML = visible
+    .map(
+      (item) => `
+        <article class="product-card${item.id === productView.editingId ? ' is-editing' : ''}">
+          <button type="button" class="product-card-media" data-view-item="${escapeHtml(item.id)}" aria-label="View ${escapeHtml(item.name)}">
+            ${renderProductImage(item, 'product-card-image')}
+            ${item.stock <= LOW_STOCK_LIMIT ? `<span class="card-flag ${item.stock <= 0 ? 'is-out' : ''}">${stockStatusText(item.stock)}</span>` : ''}
+          </button>
+          <div class="product-card-body">
+            <div class="product-card-top">
+              <span class="code">${escapeHtml(item.productId)}</span>
+              <span class="tag">${escapeHtml(item.category)}</span>
+            </div>
+            <h3 class="product-card-title">${escapeHtml(item.name)}</h3>
+            <div class="cell-sub">${escapeHtml(item.material)} · ${escapeHtml(item.purity)} · ${escapeHtml(item.weight)} g</div>
+            <div class="product-card-foot">
+              <strong class="product-card-price">${formatCurrency(item.price)}</strong>
+              <span class="product-card-stock">Stock ${renderStockBadge(item.stock)}</span>
+            </div>
+            ${productActionButtons(item)}
+          </div>
+        </article>
+      `
+    )
+    .join('');
+}
+
+function renderInventory() {
+  const inventory = getInventory();
+  const visible = sortProducts(inventory.filter(productMatchesView));
+  const isFiltered = Boolean(productView.search.trim() || productView.category || productView.lowStockOnly);
+  const showCards = productView.layout === 'cards';
+  const tableWrap = document.getElementById('productTableWrap');
+  const cards = document.getElementById('productCards');
+  const emptyState = document.getElementById('productEmptyState');
+
+  setCountLabel('inventoryCountLabel', inventory.length, 'product', 'products');
+  document.getElementById('productResultInfo').textContent = isFiltered ? `Showing ${visible.length} of ${inventory.length}` : '';
+  document.getElementById('clearProductFilters').hidden = !isFiltered;
+  document.getElementById('lowStockOnly').checked = productView.lowStockOnly;
+  document.querySelectorAll('[data-layout]').forEach((button) => {
+    button.setAttribute('aria-pressed', String(button.dataset.layout === productView.layout));
+  });
+  renderLowStockAlert(inventory);
+
+  let emptyMessage = '';
+  if (!inventory.length) emptyMessage = 'No products yet. Add your first product above.';
+  else if (!visible.length) emptyMessage = 'No products match your search or filters.';
+
+  emptyState.textContent = emptyMessage;
+  emptyState.hidden = !emptyMessage;
+  tableWrap.hidden = showCards || Boolean(emptyMessage);
+  cards.hidden = !showCards || Boolean(emptyMessage);
+
+  if (emptyMessage) {
+    document.getElementById('inventoryTableBody').innerHTML = '';
+    cards.innerHTML = '';
+    return;
+  }
+
+  if (showCards) {
+    renderProductCards(visible);
+  } else {
+    renderProductTable(visible);
+  }
 }
 
 function showProductMessage(message) {
@@ -390,7 +620,9 @@ function resetProductForm() {
   const form = document.getElementById('inventory-form');
   form.reset();
   productView.editingId = null;
+  productView.imageDraft = undefined;
   form.elements.productId.value = nextProductId(getInventory());
+  setImagePreview('');
 
   document.getElementById('productFormTitle').textContent = 'Add new product';
   document.getElementById('productSubmitLabel').textContent = 'Add product';
@@ -405,6 +637,7 @@ function startProductEdit(itemId) {
 
   const form = document.getElementById('inventory-form');
   productView.editingId = item.id;
+  productView.imageDraft = undefined;
 
   form.elements.productId.value = item.productId;
   form.elements.name.value = item.name;
@@ -414,6 +647,7 @@ function startProductEdit(itemId) {
   form.elements.weight.value = item.weight;
   form.elements.price.value = item.price;
   form.elements.stock.value = item.stock;
+  setImagePreview(getProductImages()[item.id] || '');
 
   document.getElementById('productFormTitle').textContent = `Editing ${item.productId}`;
   document.getElementById('productSubmitLabel').textContent = 'Save changes';
@@ -459,9 +693,12 @@ function validateProduct(product, inventory, editingId) {
   return '';
 }
 
-function saveProduct(event) {
+async function saveProduct(event) {
   event.preventDefault();
-  const form = event.currentTarget;
+  // Wait for an image that is still being resized
+  if (productView.imagePending) await productView.imagePending;
+
+  const form = document.getElementById('inventory-form');
   const product = readProductForm(form);
   const inventory = getInventory();
   const editingId = productView.editingId;
@@ -472,6 +709,7 @@ function saveProduct(event) {
     return;
   }
 
+  let itemId = editingId;
   if (editingId) {
     const index = inventory.findIndex((item) => item.id === editingId);
     if (index === -1) {
@@ -480,12 +718,23 @@ function saveProduct(event) {
     }
     inventory[index] = { ...inventory[index], ...product };
   } else {
-    inventory.push({ id: `item-${Date.now()}`, ...product });
+    itemId = `item-${Date.now()}`;
+    inventory.push({ id: itemId, ...product });
   }
 
   writeStorage(STORAGE_KEYS.inventory, inventory);
+
+  let imageSaved = true;
+  if (productView.imageDraft !== undefined) {
+    imageSaved = saveProductImage(itemId, productView.imageDraft);
+  }
+
   resetProductForm();
   renderAll();
+
+  if (!imageSaved) {
+    showProductMessage('Product saved, but the image could not be stored because browser storage is full. Try a smaller image or remove images from other products.');
+  }
 }
 
 function deleteProduct(itemId) {
@@ -498,15 +747,25 @@ function deleteProduct(itemId) {
   }
 
   writeStorage(STORAGE_KEYS.inventory, inventory.filter((product) => product.id !== itemId));
+  if (getProductImages()[itemId]) saveProductImage(itemId, null);
 
   if (productView.editingId === itemId) {
     resetProductForm();
   }
 
+  const productDialog = document.getElementById('productDialog');
+  if (productDialog.open && productView.viewingId === itemId) productDialog.close();
+
   renderAll();
 }
 
-function handleProductTableClick(event) {
+function handleProductListClick(event) {
+  const viewButton = event.target.closest('[data-view-item]');
+  if (viewButton) {
+    openProductView(viewButton.getAttribute('data-view-item'));
+    return;
+  }
+
   const editButton = event.target.closest('[data-edit-item]');
   if (editButton) {
     startProductEdit(editButton.getAttribute('data-edit-item'));
@@ -531,9 +790,148 @@ function populateCategoryFilter() {
 function clearProductFilters() {
   productView.search = '';
   productView.category = '';
+  productView.lowStockOnly = false;
   document.getElementById('productSearch').value = '';
   document.getElementById('categoryFilter').value = '';
   renderInventory();
+}
+
+function setProductLayout(layout) {
+  productView.layout = layout === 'cards' ? 'cards' : 'table';
+  try {
+    localStorage.setItem(STORAGE_KEYS.productLayout, productView.layout);
+  } catch (error) {
+    // Layout preference is optional
+  }
+  renderInventory();
+}
+
+function loadProductLayout() {
+  try {
+    productView.layout = localStorage.getItem(STORAGE_KEYS.productLayout) === 'cards' ? 'cards' : 'table';
+  } catch (error) {
+    productView.layout = 'table';
+  }
+}
+
+/* ---------- Product view & stock ---------- */
+
+function unitsSold(itemId) {
+  return getSales().reduce(
+    (sum, sale) => sum + sale.items.filter((line) => line.itemId === itemId).reduce((lineSum, line) => lineSum + line.quantity, 0),
+    0
+  );
+}
+
+function renderProductView(itemId, message = '') {
+  const item = getInventory().find((product) => product.id === itemId);
+  if (!item) return false;
+
+  const inBill = billState.lines.find((line) => line.itemId === item.id);
+  const statusClass = item.stock <= 0 ? 'badge-out' : item.stock <= LOW_STOCK_LIMIT ? 'badge-low' : 'badge-ok';
+
+  document.getElementById('productDialogTitle').textContent = `${item.productId} · ${item.name}`;
+  document.getElementById('productDialogContent').innerHTML = `
+    <div class="product-view">
+      ${renderProductImage(item, 'product-view-image')}
+      <div class="product-view-info">
+        <div class="product-view-heading">
+          <h3>${escapeHtml(item.name)}</h3>
+          <div class="product-view-price">${formatMoney(item.price)}</div>
+        </div>
+        <dl class="detail-grid">
+          <div><dt>Product ID</dt><dd><span class="code">${escapeHtml(item.productId)}</span></dd></div>
+          <div><dt>Category</dt><dd>${escapeHtml(item.category)}</dd></div>
+          <div><dt>Material</dt><dd>${escapeHtml(item.material)}</dd></div>
+          <div><dt>Purity</dt><dd>${escapeHtml(item.purity)}</dd></div>
+          <div><dt>Weight</dt><dd>${escapeHtml(item.weight)} g</dd></div>
+          <div><dt>Stock value</dt><dd>${formatCurrency(item.price * item.stock)}</dd></div>
+          <div><dt>Units sold</dt><dd>${unitsSold(item.id)}</dd></div>
+          <div><dt>Status</dt><dd><span class="badge ${statusClass}">${stockStatusText(item.stock)}</span></dd></div>
+        </dl>
+
+        <div class="stock-control">
+          <div class="stock-control-head">
+            <span class="label">Stock quantity</span>
+            ${inBill ? `<span class="cell-sub">${inBill.quantity} on the current bill</span>` : ''}
+          </div>
+          <div class="stock-stepper">
+            <button type="button" class="stepper-btn" data-stock-step="-1" aria-label="Decrease stock by 1"${item.stock <= 0 ? ' disabled' : ''}>−</button>
+            <input type="number" id="productStockInput" value="${item.stock}" min="0" step="1" aria-label="Stock quantity" />
+            <button type="button" class="stepper-btn" data-stock-step="1" aria-label="Increase stock by 1">+</button>
+            <button type="button" class="btn btn-secondary" data-stock-set>Update stock</button>
+          </div>
+          ${item.stock <= LOW_STOCK_LIMIT ? `<p class="stock-warning">${item.stock <= 0 ? 'This product is out of stock and cannot be billed.' : `Only ${item.stock} left. Consider restocking soon.`}</p>` : ''}
+          <p class="form-message" id="productStockMessage" role="alert"${message ? '' : ' hidden'}>${escapeHtml(message)}</p>
+        </div>
+
+        <div class="product-view-actions">
+          <button type="button" class="btn btn-primary" data-edit-item="${escapeHtml(item.id)}">Edit product</button>
+        </div>
+      </div>
+    </div>
+  `;
+  return true;
+}
+
+function openProductView(itemId) {
+  productView.viewingId = itemId;
+  if (!renderProductView(itemId)) return;
+  const dialog = document.getElementById('productDialog');
+  if (!dialog.open) dialog.showModal();
+}
+
+function updateProductStock(itemId, newStock) {
+  const inventory = getInventory();
+  const item = inventory.find((product) => product.id === itemId);
+  if (!item) return 'This product no longer exists.';
+  if (!Number.isInteger(newStock) || newStock < 0) return 'Stock must be a whole number (0 or more).';
+
+  const inBill = billState.lines.find((line) => line.itemId === itemId);
+  if (inBill && newStock < inBill.quantity) {
+    return `${inBill.quantity} of this product are on the current bill. Remove them from the bill first, or keep stock at ${inBill.quantity} or more.`;
+  }
+
+  item.stock = newStock;
+  writeStorage(STORAGE_KEYS.inventory, inventory);
+  if (productView.editingId === itemId) {
+    document.getElementById('inventory-form').elements.stock.value = newStock;
+  }
+  renderAll();
+  return '';
+}
+
+function handleProductDialogClick(event) {
+  const itemId = productView.viewingId;
+
+  const stepButton = event.target.closest('[data-stock-step]');
+  if (stepButton) {
+    const current = getInventory().find((product) => product.id === itemId);
+    if (!current) return;
+    const error = updateProductStock(itemId, current.stock + Number(stepButton.dataset.stockStep));
+    renderProductView(itemId, error);
+    const sameButton = document.querySelector(`#productDialog [data-stock-step="${stepButton.dataset.stockStep}"]`);
+    if (sameButton && !sameButton.disabled) sameButton.focus();
+    return;
+  }
+
+  if (event.target.closest('[data-stock-set]')) {
+    applyStockInput();
+    return;
+  }
+
+  const editButton = event.target.closest('[data-edit-item]');
+  if (editButton) {
+    document.getElementById('productDialog').close();
+    startProductEdit(editButton.getAttribute('data-edit-item'));
+  }
+}
+
+function applyStockInput() {
+  const input = document.getElementById('productStockInput');
+  const value = input.value === '' ? NaN : Number(input.value);
+  const error = updateProductStock(productView.viewingId, value);
+  renderProductView(productView.viewingId, error);
 }
 
 /* ---------- Customers ---------- */
@@ -1265,7 +1663,33 @@ function init() {
     resetProductForm();
     renderInventory();
   });
-  document.getElementById('inventoryTableBody').addEventListener('click', handleProductTableClick);
+  document.getElementById('inventoryTableBody').addEventListener('click', handleProductListClick);
+  document.getElementById('productCards').addEventListener('click', handleProductListClick);
+  document.getElementById('productImageInput').addEventListener('change', handleProductImageChange);
+  document.getElementById('removeProductImage').addEventListener('click', removeProductImageDraft);
+  document.getElementById('productSort').addEventListener('change', (event) => {
+    productView.sort = event.target.value;
+    renderInventory();
+  });
+  document.getElementById('lowStockOnly').addEventListener('change', (event) => {
+    productView.lowStockOnly = event.target.checked;
+    renderInventory();
+  });
+  document.getElementById('showLowStock').addEventListener('click', () => {
+    productView.lowStockOnly = !productView.lowStockOnly;
+    renderInventory();
+    if (productView.lowStockOnly) document.getElementById('lowStockAlert').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  document.querySelectorAll('[data-layout]').forEach((button) => {
+    button.addEventListener('click', () => setProductLayout(button.dataset.layout));
+  });
+  document.getElementById('productDialog').addEventListener('click', handleProductDialogClick);
+  document.getElementById('productDialog').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && event.target.id === 'productStockInput') {
+      event.preventDefault();
+      applyStockInput();
+    }
+  });
   document.getElementById('productSearch').addEventListener('input', (event) => {
     productView.search = event.target.value;
     renderInventory();
@@ -1311,6 +1735,7 @@ function init() {
   document.getElementById('clearCustomerSearch').addEventListener('click', clearCustomerSearch);
 
   setupDialogs();
+  loadProductLayout();
   populateCategoryFilter();
   resetProductForm();
   resetCustomerForm();
