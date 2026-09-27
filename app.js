@@ -58,6 +58,16 @@ function formatCurrency(value) {
   }).format(value);
 }
 
+function renderStockBadge(stock) {
+  if (stock <= 0) return `<span class="badge badge-out">${stock}</span>`;
+  if (stock <= 2) return `<span class="badge badge-low">${stock}</span>`;
+  return `<span class="badge badge-ok">${stock}</span>`;
+}
+
+function setCountLabel(elementId, count, singular, plural) {
+  document.getElementById(elementId).textContent = `${count} ${count === 1 ? singular : plural}`;
+}
+
 function renderStats() {
   const inventory = getInventory();
   const customers = getCustomers();
@@ -76,6 +86,7 @@ function renderStats() {
 function renderInventory() {
   const inventory = getInventory();
   const tableBody = document.getElementById('inventoryTableBody');
+  setCountLabel('inventoryCountLabel', inventory.length, 'item', 'items');
 
   if (!inventory.length) {
     tableBody.innerHTML = '<tr><td colspan="7" class="empty-state">No items yet.</td></tr>';
@@ -86,13 +97,13 @@ function renderInventory() {
     .map(
       (item) => `
         <tr>
-          <td>${item.name}</td>
-          <td>${item.category}</td>
-          <td>${item.purity}</td>
-          <td>${item.weight} g</td>
-          <td>${formatCurrency(item.price)}</td>
-          <td>${item.stock}</td>
-          <td><button type="button" class="small-btn" data-delete-item="${item.id}">Delete</button></td>
+          <td data-label="Item" class="cell-strong">${item.name}</td>
+          <td data-label="Category"><span class="tag">${item.category}</span></td>
+          <td data-label="Purity">${item.purity}</td>
+          <td data-label="Weight" class="num">${item.weight} g</td>
+          <td data-label="Price" class="num cell-strong">${formatCurrency(item.price)}</td>
+          <td data-label="Stock" class="num">${renderStockBadge(item.stock)}</td>
+          <td class="actions"><button type="button" class="small-btn" data-delete-item="${item.id}">Delete</button></td>
         </tr>
       `
     )
@@ -111,6 +122,7 @@ function renderInventory() {
 function renderSales() {
   const sales = getSales();
   const tableBody = document.getElementById('salesTableBody');
+  setCountLabel('salesCountLabel', sales.length, 'sale', 'sales');
 
   if (!sales.length) {
     tableBody.innerHTML = '<tr><td colspan="5" class="empty-state">No sales recorded.</td></tr>';
@@ -123,11 +135,11 @@ function renderSales() {
     .map(
       (sale) => `
         <tr>
-          <td>${sale.customer}</td>
-          <td>${sale.item}</td>
-          <td>${sale.quantity}</td>
-          <td>${formatCurrency(sale.amount)}</td>
-          <td>${sale.date}</td>
+          <td data-label="Customer" class="cell-strong">${sale.customer}</td>
+          <td data-label="Item">${sale.item}</td>
+          <td data-label="Qty" class="num">${sale.quantity}</td>
+          <td data-label="Amount" class="num cell-strong">${formatCurrency(sale.amount)}</td>
+          <td data-label="Date" class="cell-muted">${sale.date}</td>
         </tr>
       `
     )
@@ -137,6 +149,7 @@ function renderSales() {
 function renderCustomers() {
   const customers = getCustomers();
   const tableBody = document.getElementById('customersTableBody');
+  setCountLabel('customersCountLabel', customers.length, 'customer', 'customers');
 
   if (!customers.length) {
     tableBody.innerHTML = '<tr><td colspan="3" class="empty-state">No customers yet.</td></tr>';
@@ -147,9 +160,9 @@ function renderCustomers() {
     .map(
       (customer) => `
         <tr>
-          <td>${customer.name}</td>
-          <td>${customer.phone}</td>
-          <td>${customer.city}</td>
+          <td data-label="Name" class="cell-strong">${customer.name}</td>
+          <td data-label="Phone" class="cell-muted">${customer.phone}</td>
+          <td data-label="City">${customer.city}</td>
         </tr>
       `
     )
