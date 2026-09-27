@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jewellery Management</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Jewellery Shop</p>
+          <h1>Management Dashboard</h1>
+        </div>
+        <div class="topbar-meta">
+          <span id="todayDate"></span>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <section class="stats-grid" aria-label="Business overview">
+          <article class="stat-card accent-purple">
+            <span class="label">Inventory Value</span>
+            <strong id="inventoryValue">₹0</strong>
+          </article>
+          <article class="stat-card accent-gold">
+            <span class="label">Monthly Sales</span>
+            <strong id="monthlySales">₹0</strong>
+          </article>
+          <article class="stat-card accent-blue">
+            <span class="label">Customers</span>
+            <strong id="customerCount">0</strong>
+          </article>
+          <article class="stat-card accent-rose">
+            <span class="label">Low Stock Items</span>
+            <strong id="lowStockCount">0</strong>
+          </article>
+        </section>
+
+        <section class="panel" aria-labelledby="inventory-title">
+          <div class="panel-header">
+            <div>
+              <p class="subhead">Catalog</p>
+              <h2 id="inventory-title">Inventory</h2>
+            </div>
+          </div>
+
+          <form id="inventory-form" class="form-grid">
+            <input type="text" name="name" placeholder="Item name" required />
+            <select name="category" required>
+              <option value="">Category</option>
+              <option value="Ring">Ring</option>
+              <option value="Necklace">Necklace</option>
+              <option value="Bracelet">Bracelet</option>
+              <option value="Earrings">Earrings</option>
+              <option value="Pendant">Pendant</option>
+              <option value="Bangle">Bangle</option>
+            </select>
+            <input type="text" name="purity" placeholder="Purity" value="18K" required />
+            <input type="number" name="weight" placeholder="Weight (g)" min="0" step="0.01" required />
+            <input type="number" name="price" placeholder="Selling price" min="0" step="0.01" required />
+            <input type="number" name="stock" placeholder="Stock" min="0" step="1" required />
+            <button type="submit">Add item</button>
+          </form>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Category</th>
+                  <th>Purity</th>
+                  <th>Weight</th>
+                  <th>Price</th>
+                  <th>Stock</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="inventoryTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="sales-title">
+          <div class="panel-header">
+            <div>
+              <p class="subhead">Transactions</p>
+              <h2 id="sales-title">Recent Sales</h2>
+            </div>
+          </div>
+
+          <form id="sale-form" class="form-grid compact">
+            <select id="saleCustomer" name="customer" required>
+              <option value="">Customer</option>
+            </select>
+            <select id="saleItem" name="item" required>
+              <option value="">Item</option>
+            </select>
+            <input type="number" name="quantity" placeholder="Qty" min="1" step="1" required />
+            <input type="number" name="amount" placeholder="Amount" min="0" step="0.01" required />
+            <button type="submit">Record sale</button>
+          </form>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Customer</th>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Amount</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody id="salesTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="customers-title">
+          <div class="panel-header">
+            <div>
+              <p class="subhead">CRM</p>
+              <h2 id="customers-title">Customers</h2>
+            </div>
+          </div>
+
+          <form id="customer-form" class="form-grid compact">
+            <input type="text" name="name" placeholder="Customer name" required />
+            <input type="tel" name="phone" placeholder="Phone" required />
+            <input type="text" name="city" placeholder="City" required />
+            <button type="submit">Add customer</button>
+          </form>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Phone</th>
+                  <th>City</th>
+                </tr>
+              </thead>
+              <tbody id="customersTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
